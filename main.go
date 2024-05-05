@@ -147,7 +147,7 @@ func (s *splitter) Load(file, spec string) ([]Migration, error) {
 		}
 		return group(units), nil
 	}
-	slices.Reverse(es)
+	// slices.Reverse(es)
 	rgl, err := parseSpec(spec)
 	if err != nil {
 		return nil, err
@@ -303,6 +303,9 @@ type Range struct {
 }
 
 func (r Range) peek(list []os.DirEntry) ([]os.DirEntry, error) {
+	if !r.isValid() {
+		return nil, fmt.Errorf("range invalid")
+	}
 	if r.End == 0 && r.Start != 0 {
 		r.End = len(list) - 1
 	}
@@ -312,6 +315,7 @@ func (r Range) peek(list []os.DirEntry) ([]os.DirEntry, error) {
 	if r.Start > len(list) || r.End > len(list) {
 		return nil, fmt.Errorf("index of out range")
 	}
+	fmt.Println(list)
 	return list[r.Start:r.End], nil
 }
 
@@ -320,7 +324,7 @@ func (r Range) isRange() bool {
 }
 
 func (r Range) isValid() bool {
-	return r.Start < r.End && r.Start > 0
+	return r.Start <= r.End
 }
 
 func parseSpec(spec string) ([]Range, error) {
