@@ -303,7 +303,16 @@ type Range struct {
 }
 
 func (r Range) peek(list []os.DirEntry) ([]os.DirEntry, error) {
-	return list, nil
+	if r.End == 0 && r.Start != 0 {
+		r.End = len(list) - 1
+	}
+	if !r.isRange() {
+		r.End = r.Start+1
+	}
+	if r.Start > len(list) || r.End > len(list) {
+		return nil, fmt.Errorf("index of out range")
+	}
+	return list[r.Start:r.End], nil
 }
 
 func (r Range) isRange() bool {
