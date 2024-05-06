@@ -102,6 +102,28 @@ type Unit struct {
 	Up    bool
 }
 
+func group(units []Unit) []Migration {
+	var ms []Migration
+	for _, u := range units {
+		x := slices.IndexFunc(ms, func(m Migration) bool {
+			return m.Group == u.Group
+		})
+		if x < 0 {
+			m := Migration{
+				Group: u.Group,
+			}
+			ms = append(ms, m)
+			x = len(ms) - 1
+		}
+		if u.Up {
+			ms[x].Up = append(ms[x].Up, u)
+		} else {
+			ms[x].Down = append(ms[x].Down, u)
+		}
+	}
+	return ms
+}
+
 type Migration struct {
 	Up    []Unit
 	Down  []Unit
@@ -261,28 +283,6 @@ func (s *splitter) splitStmt(data []byte, atEof bool) (int, []byte, error) {
 	}
 	ix += len(s.delimiter)
 	return offset + ix, bytes.TrimSpace(data[:ix]), nil
-}
-
-func group(units []Unit) []Migration {
-	var ms []Migration
-	for _, u := range units {
-		x := slices.IndexFunc(ms, func(m Migration) bool {
-			return m.Group == u.Group
-		})
-		if x < 0 {
-			m := Migration{
-				Group: u.Group,
-			}
-			ms = append(ms, m)
-			x = len(ms) - 1
-		}
-		if u.Up {
-			ms[x].Up = append(ms[x].Up, u)
-		} else {
-			ms[x].Down = append(ms[x].Down, u)
-		}
-	}
-	return ms
 }
 
 type Range struct {
