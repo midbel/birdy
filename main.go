@@ -422,5 +422,5 @@ func (d dsnInfo) execStmts(db *sql.DB, queries []Unit) error {
 		}
 		fmt.Fprintln(os.Stdout, q.Query)
 	}
-	return nil	
+	return nil
 }
