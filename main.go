@@ -43,23 +43,36 @@ func main() {
 		fmt.Fprintln(os.Stderr, "invalid number of arguments given")
 		os.Exit(2)
 	}
+	var err error
 	switch cmd := flag.Arg(0); cmd {
 	case "up", "down", "redo":
-		list, err := extractSQL(file, spec)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
+		list, err1 := extractSQL(file, spec)
+		if err1 != nil {
+			err = err1
+			break
 		}
-		return
-		if err := execute(dsn, cmd, list, dry); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(2)
+		err = execute(dsn, cmd, list, dry)
+	case "info":
+		list, err1 := extractSQL(file, spec)
+		if err1 != nil {
+			err = err1
+			break
 		}
-	case "status":
-		// pass
+		for _, m := range list {
+			n, _ := fmt.Fprintf(os.Stdout, "migration #%d", m.Group)
+			fmt.Fprintln(os.Stdout)
+			fmt.Fprintln(os.Stdout, strings.Repeat("=", n))
+			fmt.Fprintf(os.Stdout, "- up  : %d queries", len(m.Up))
+			fmt.Fprintln(os.Stdout)
+			fmt.Fprintf(os.Stdout, "- down: %d queries", len(m.Down))
+			fmt.Fprintln(os.Stdout)
+		}
 	default:
-		fmt.Fprintf(os.Stderr, "unknown command %s", cmd)
-		fmt.Fprintln(os.Stderr)
+		err = fmt.Errorf("%s: unknown command", cmd)
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
 	}
 }
 
@@ -310,6 +323,7 @@ func (r Range) peek(list []os.DirEntry) ([]os.DirEntry, error) {
 	if !r.isRange() {
 		r.End = r.Start + 1
 	}
+	r.End++
 	if r.Start > len(list) || r.End > len(list) {
 		return nil, fmt.Errorf("index of out range")
 	}
@@ -321,7 +335,10 @@ func (r Range) isRange() bool {
 }
 
 func (r Range) isValid() bool {
-	return r.Start <= r.End
+	if (r.Start != 0 && r.End == 0) || (r.End != 0 && r.Start == 0) {
+		return true
+	}
+	return r.Start < r.End
 }
 
 func parseSpec(spec string) ([]Range, error) {
@@ -344,22 +361,31 @@ func parseSpecItem(spec string) (Range, error) {
 		}
 		return r, err
 	}
-	bef, aft, ok := strings.Cut(spec, "..")
+	before, after, ok := strings.Cut(spec, "..")
 	if !ok {
 		return Range{}, fmt.Errorf("invalid spec format: missing range")
+	}
+
+	atoi := func(str string) (int, error) {
+		v, err := strconv.Atoi(str)
+		if err != nil && str != "" {
+			return 0, err
+		}
+		if str != "" {
+			v--
+		}
+		return v, nil
 	}
 	var (
 		rg  Range
 		err error
 	)
-	if rg.Start, err = strconv.Atoi(bef); err != nil && bef != "" {
+	if rg.Start, err = atoi(before); err != nil {
 		return rg, err
 	}
-	rg.Start--
-	if rg.End, err = strconv.Atoi(aft); err != nil && aft != "" {
+	if rg.End, err = atoi(after); err != nil {
 		return rg, err
 	}
-	rg.End--
 	if !rg.isValid() {
 		return rg, fmt.Errorf("invalid range")
 	}
