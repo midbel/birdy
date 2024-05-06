@@ -139,6 +139,7 @@ type splitter struct {
 	delimiter []byte
 	group     int
 	up        bool
+	ignore    bool
 }
 
 func createSplitter() *splitter {
@@ -209,7 +210,7 @@ func (s *splitter) Split(r io.Reader) ([]Unit, error) {
 		if s.updateState(sql) {
 			continue
 		}
-		if len(sql) == 0 {
+		if len(sql) == 0 || s.ignore {
 			continue
 		}
 		u := Unit{
@@ -232,8 +233,12 @@ func (s *splitter) updateState(sql string) bool {
 	if sql == "up" {
 		s.up = true
 		s.group++
+		s.ignore = false
 	} else if sql == "down" {
 		s.up = false
+		s.ignore = false
+	} else if sql == "ignore" {
+		s.ignore = true
 	} else if strings.HasPrefix(sql, "delimiter") {
 		sql = strings.TrimPrefix(sql, "delimiter")
 		sql = strings.TrimSpace(sql)
@@ -380,7 +385,7 @@ func (d dsnInfo) Get() string {
 	return fmt.Sprintf("%s:%s@tcp(%s:%d)/%s", d.User, d.Pass, d.Host, d.Port, d.Name)
 }
 
-func (d dsnInfo) Exec(queries []Unit) error {
+func (d dsnInfo) Exec(queries [][]Unit) error {
 	var err error
 	switch d.Driver {
 	case "mysql", "mariadb":
