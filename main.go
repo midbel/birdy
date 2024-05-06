@@ -31,7 +31,7 @@ func main() {
 	flag.Parse()
 	var (
 		file string
-		spec string = "0"
+		spec string = "1"
 	)
 	if flag.NArg() == 2 {
 		file = flag.Arg(1)
@@ -50,6 +50,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
+		return
 		if err := execute(dsn, cmd, list, dry); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(2)
@@ -147,7 +148,7 @@ func (s *splitter) Load(file, spec string) ([]Migration, error) {
 		}
 		return group(units), nil
 	}
-	// slices.Reverse(es)
+	slices.Reverse(es)
 	rgl, err := parseSpec(spec)
 	if err != nil {
 		return nil, err
@@ -303,19 +304,15 @@ type Range struct {
 }
 
 func (r Range) peek(list []os.DirEntry) ([]os.DirEntry, error) {
-	if !r.isValid() {
-		return nil, fmt.Errorf("range invalid")
-	}
 	if r.End == 0 && r.Start != 0 {
 		r.End = len(list) - 1
 	}
 	if !r.isRange() {
-		r.End = r.Start+1
+		r.End = r.Start + 1
 	}
 	if r.Start > len(list) || r.End > len(list) {
 		return nil, fmt.Errorf("index of out range")
 	}
-	fmt.Println(list)
 	return list[r.Start:r.End], nil
 }
 
@@ -358,8 +355,13 @@ func parseSpecItem(spec string) (Range, error) {
 	if rg.Start, err = strconv.Atoi(bef); err != nil && bef != "" {
 		return rg, err
 	}
+	rg.Start--
 	if rg.End, err = strconv.Atoi(aft); err != nil && aft != "" {
 		return rg, err
+	}
+	rg.End--
+	if !rg.isValid() {
+		return rg, fmt.Errorf("invalid range")
 	}
 	return rg, nil
 }
