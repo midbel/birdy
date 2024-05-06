@@ -82,44 +82,18 @@ func extractSQL(file, spec string) ([]Migration, error) {
 }
 
 func execute(dsn dsnInfo, cmd string, all []Migration, dry bool) error {
-	db, err := sql.Open(dsn.Driver, dsn.Get())
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-	if err := db.Ping(); err != nil {
-		return err
-	}
+	var list [][]Unit
 	for _, a := range all {
-		list := a.Up
+		qs := a.Up
 		if cmd == "down" {
-			list = a.Down
+			qs = a.Down
 		} else if cmd == "redo" {
-			list = append(a.Down, a.Up...)
+			qs = append(a.Down, qs...)
 		}
-		if err := executeStmts(db, list); err != nil {
-			return err
-		}
+		list = append(list, qs)
 	}
-	return nil
+	return dsn.Exec(list)
 
-}
-
-func executeStmts(db *sql.DB, queries []Unit) error {
-	tx, err := db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Commit()
-	for _, q := range queries {
-		_, err := tx.Exec(q.Query)
-		if err != nil {
-			tx.Rollback()
-			return err
-		}
-		fmt.Fprintln(os.Stdout, q.Query)
-	}
-	return nil
 }
 
 type Unit struct {
@@ -404,4 +378,49 @@ type dsnInfo struct {
 
 func (d dsnInfo) Get() string {
 	return fmt.Sprintf("%s:%s@tcp(%s:%d)/%s", d.User, d.Pass, d.Host, d.Port, d.Name)
+}
+
+func (d dsnInfo) Exec(queries []Unit) error {
+	var err error
+	switch d.Driver {
+	case "mysql", "mariadb":
+		err = d.execMysql(queries)
+	default:
+		err = fmt.Errorf("%s: unsupported driver", d.Driver)
+	}
+	return err
+}
+
+func (d dsnInfo) execMysql(queries [][]Unit) error {
+	db, err := sql.Open(d.Driver, d.Get())
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	if err := db.Ping(); err != nil {
+		return err
+	}
+	for i := range queries {
+		if err := d.execStmts(db, queries[i]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (d dsnInfo) execStmts(db *sql.DB, queries []Unit) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Commit()
+	for _, q := range queries {
+		_, err := tx.Exec(q.Query)
+		if err != nil {
+			tx.Rollback()
+			return err
+		}
+		fmt.Fprintln(os.Stdout, q.Query)
+	}
+	return nil	
 }
