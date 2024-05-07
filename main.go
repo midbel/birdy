@@ -17,11 +17,7 @@ import (
 )
 
 func main() {
-	var (
-		dry bool
-		dsn dsnInfo
-	)
-	flag.BoolVar(&dry, "n", false, "dry run")
+	var dsn dsnInfo
 	flag.StringVar(&dsn.User, "u", os.Getenv("username"), "database username")
 	flag.StringVar(&dsn.Pass, "w", os.Getenv("password"), "database user password")
 	flag.StringVar(&dsn.Host, "s", os.Getenv("server"), "server name")
@@ -43,21 +39,16 @@ func main() {
 		fmt.Fprintln(os.Stderr, "invalid number of arguments given")
 		os.Exit(2)
 	}
-	var err error
+	list, err := extractSQL(file, spec)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 	switch cmd := flag.Arg(0); cmd {
 	case "up", "down", "redo":
-		list, err1 := extractSQL(file, spec)
-		if err1 != nil {
-			err = err1
-			break
-		}
-		err = execute(dsn, cmd, list, dry)
+		units := getUnitsFromCommand(cmd, list)
+		err = dsn.Exec(units)
 	case "info":
-		list, err1 := extractSQL(file, spec)
-		if err1 != nil {
-			err = err1
-			break
-		}
 		for _, m := range list {
 			n, _ := fmt.Fprintf(os.Stdout, "migration #%d", m.Group)
 			fmt.Fprintln(os.Stdout)
@@ -67,6 +58,7 @@ func main() {
 			fmt.Fprintf(os.Stdout, "- down: %d queries", len(m.Down))
 			fmt.Fprintln(os.Stdout)
 		}
+	case "history":
 	default:
 		err = fmt.Errorf("%s: unknown command", cmd)
 	}
@@ -81,7 +73,7 @@ func extractSQL(file, spec string) ([]Migration, error) {
 	return s.Load(file, spec)
 }
 
-func execute(dsn dsnInfo, cmd string, all []Migration, dry bool) error {
+func getUnitsFromCommand(cmd string, all []Migration) [][]Unit {
 	var list [][]Unit
 	for _, a := range all {
 		qs := a.Up
@@ -92,8 +84,7 @@ func execute(dsn dsnInfo, cmd string, all []Migration, dry bool) error {
 		}
 		list = append(list, qs)
 	}
-	return dsn.Exec(list)
-
+	return list
 }
 
 type Unit struct {
