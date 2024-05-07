@@ -296,6 +296,9 @@ type Range struct {
 }
 
 func (r Range) peek(list []os.DirEntry) ([]os.DirEntry, error) {
+	if r.isFull() {
+		return list, nil
+	}
 	if r.End == 0 && r.Start != 0 {
 		r.End = len(list) - 1
 	}
@@ -313,14 +316,26 @@ func (r Range) isRange() bool {
 	return r.Start != r.End
 }
 
+func (r Range) isFull() bool {
+	return r.Start == 0 && r.End == 0
+}
+
+func (r Range) isHalfOpen() bool {
+	return (r.Start != 0 && r.End == 0) || (r.End != 0 && r.Start == 0)
+}
+
 func (r Range) isValid() bool {
-	if (r.Start != 0 && r.End == 0) || (r.End != 0 && r.Start == 0) {
+	if r.isHalfOpen() || r.isFull() {
 		return true
 	}
 	return r.Start < r.End
 }
 
 func parseSpec(spec string) ([]Range, error) {
+	if spec == "*" {
+		var rg Range
+		return []Range{rg}, nil
+	}
 	var list []Range
 	for _, str := range strings.Split(spec, ",") {
 		rg, err := parseSpecItem(str)
