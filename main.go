@@ -17,29 +17,12 @@ import (
 )
 
 func main() {
-	var dsn dsnInfo
-	flag.StringVar(&dsn.User, "u", os.Getenv("username"), "database username")
-	flag.StringVar(&dsn.Pass, "w", os.Getenv("password"), "database user password")
-	flag.StringVar(&dsn.Host, "s", os.Getenv("server"), "server name")
-	flag.IntVar(&dsn.Port, "p", 0, "server port")
-	flag.StringVar(&dsn.Name, "d", os.Getenv("database"), "database name")
-	flag.StringVar(&dsn.Driver, "i", os.Getenv("driver"), "database driver")
-	flag.Parse()
-	var (
-		file string
-		spec string = "1"
-	)
-	if flag.NArg() == 2 {
-		file = flag.Arg(1)
-	} else if flag.NArg() == 3 {
-		file = flag.Arg(2)
-		spec = flag.Arg(1)
-
-	} else {
-		fmt.Fprintln(os.Stderr, "invalid number of arguments given")
+	args, err := parseArgs()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
-	list, err := extractSQL(file, spec)
+	list, err := extractSQL(args.File, args.Spec)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -47,7 +30,7 @@ func main() {
 	switch cmd := flag.Arg(0); cmd {
 	case "up", "down", "redo":
 		units := getUnitsFromCommand(cmd, list)
-		err = dsn.Exec(units)
+		err = args.dsn.Exec(units)
 	case "info":
 		for _, m := range list {
 			n, _ := fmt.Fprintf(os.Stdout, "migration #%d", m.Group)
@@ -66,6 +49,38 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
+}
+
+type Args struct {
+	dsn  dsnInfo
+	File string
+	Spec string
+}
+
+func parseArgs() (Args, error) {
+	var (
+		dsn dsnInfo
+		arg Args
+	)
+	flag.StringVar(&dsn.User, "u", os.Getenv("username"), "database username")
+	flag.StringVar(&dsn.Pass, "w", os.Getenv("password"), "database user password")
+	flag.StringVar(&dsn.Host, "s", os.Getenv("server"), "server name")
+	flag.IntVar(&dsn.Port, "p", 0, "server port")
+	flag.StringVar(&dsn.Name, "d", os.Getenv("database"), "database name")
+	flag.StringVar(&dsn.Driver, "i", os.Getenv("driver"), "database driver")
+	flag.Parse()
+
+	if flag.NArg() == 2 {
+		arg.File = flag.Arg(1)
+		arg.Spec = "1"
+	} else if flag.NArg() == 3 {
+		arg.File = flag.Arg(2)
+		arg.Spec = flag.Arg(1)
+	} else {
+		return arg, fmt.Errorf("invalid number of arguments given")
+	}
+	arg.dsn = dsn
+	return arg, nil
 }
 
 func extractSQL(file, spec string) ([]Migration, error) {
