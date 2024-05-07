@@ -93,7 +93,7 @@ type Unit struct {
 	Up    bool
 }
 
-func group(units []Unit) []Migration {
+func group(origin string, units []Unit) []Migration {
 	var ms []Migration
 	for _, u := range units {
 		x := slices.IndexFunc(ms, func(m Migration) bool {
@@ -101,6 +101,7 @@ func group(units []Unit) []Migration {
 		})
 		if x < 0 {
 			m := Migration{
+				File:  origin,
 				Group: u.Group,
 			}
 			ms = append(ms, m)
@@ -116,6 +117,7 @@ func group(units []Unit) []Migration {
 }
 
 type Migration struct {
+	File  string
 	Up    []Unit
 	Down  []Unit
 	Group int
@@ -147,7 +149,7 @@ func (s *splitter) Load(file, spec string) ([]Migration, error) {
 		if err != nil {
 			return nil, err
 		}
-		return group(units), nil
+		return group(file, units), nil
 	}
 	slices.Reverse(es)
 	rgl, err := parseSpec(spec)
@@ -166,11 +168,12 @@ func (s *splitter) Load(file, spec string) ([]Migration, error) {
 
 	var all []Migration
 	for _, e := range files {
-		units, err := s.load(filepath.Join(file, e.Name()))
+		origin := filepath.Join(file, e.Name())
+		units, err := s.load(origin)
 		if err != nil {
 			return nil, err
 		}
-		all = append(all, group(units)...)
+		all = append(all, group(origin, units)...)
 	}
 	return all, nil
 }
