@@ -21,7 +21,7 @@ import (
 )
 
 func init() {
-	sql.Register("dry", dryDriver{})
+	sql.Register("dry", getDriver())
 }
 
 func main() {
@@ -562,9 +562,9 @@ type dryStmt struct {
 	stmt   string
 }
 
-func getStmt(stmt string) driver.Stmt {
+func getStmt(logger *slog.Logger, stmt string) driver.Stmt {
 	return dryStmt{
-		logger: slog.New(slog.NewTextHandler(os.Stderr, nil)).WithGroup("stmt"),
+		logger: logger,
 		stmt:   stmt,
 	}
 }
@@ -611,13 +611,23 @@ func (d dryStmt) QueryContext(ctx context.Context, args []driver.NamedValue) (dr
 	return rows, nil
 }
 
-type dryTx struct{}
+type dryTx struct {
+	logger *slog.Logger
+}
+
+func getTx(logger *slog.Logger) driver.Tx {
+	return dryTx{
+		logger: logger,
+	}
+}
 
 func (d dryTx) Commit() error {
+	d.logger.Info("", "call", "tx", "sql", "commit")
 	return nil
 }
 
 func (d dryTx) Rollback() error {
+	d.logger.Info("", "call", "tx", "sql", "rollback")
 	return nil
 }
 
@@ -625,9 +635,9 @@ type dryConn struct {
 	logger *slog.Logger
 }
 
-func getConn() driver.Conn {
+func getConn(logger *slog.Logger) driver.Conn {
 	return dryConn{
-		logger: slog.New(slog.NewTextHandler(os.Stderr, nil)).WithGroup("conn"),
+		logger: logger,
 	}
 }
 
@@ -652,7 +662,7 @@ func (d dryConn) ExecContext(ctx context.Context, query string, args []driver.Na
 }
 
 func (d dryConn) PrepareContext(ctx context.Context, query string) (driver.Stmt, error) {
-	return getStmt(query), nil
+	return getStmt(d.logger.WithGroup("stmt"), query), nil
 }
 
 func (d dryConn) Prepare(stmt string) (driver.Stmt, error) {
@@ -669,18 +679,28 @@ func (d dryConn) Begin() (driver.Tx, error) {
 }
 
 func (d dryConn) BeginTx(_ context.Context, opts driver.TxOptions) (driver.Tx, error) {
-	var tx dryTx
-	return tx, nil
+	d.logger.Info("", "call", "tx", "sql", "begin")
+	return getTx(d.logger.WithGroup("tx")), nil
 }
 
 func (d dryConn) Ping(_ context.Context) error {
+	d.logger.Info("", "call", "driver", "exec", "ping")
 	return nil
 }
 
-type dryDriver struct{}
+type dryDriver struct {
+	logger *slog.Logger
+}
+
+func getDriver() driver.Driver {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	return dryDriver{
+		logger: logger,
+	}
+}
 
 func (d dryDriver) Open(name string) (driver.Conn, error) {
-	return getConn(), nil
+	return getConn(d.logger.WithGroup("conn")), nil
 }
 
 func onelineSql(query string) string {
