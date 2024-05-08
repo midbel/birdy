@@ -3,10 +3,14 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"database/sql"
+	"database/sql/driver"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -15,6 +19,10 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 )
+
+func init() {
+	sql.Register("dry", dryDriver{})
+}
 
 func main() {
 	args, err := parseArgs()
@@ -102,10 +110,23 @@ func getUnitsFromCommand(cmd string, all []Migration) [][]Unit {
 	return list
 }
 
+type ErrHandlerCode int
+
+const (
+	DefaultHandler ErrHandlerCode = iota
+	SilentHandler
+	WarningHandler
+)
+
 type Unit struct {
 	Query string
 	Group int
 	Up    bool
+	Error ErrHandlerCode
+}
+
+func (u Unit) RollbackOnError() bool {
+	return u.Error == DefaultHandler
 }
 
 func group(origin string, units []Unit) []Migration {
@@ -180,6 +201,7 @@ func (s *splitter) Load(file, spec string) ([]Migration, error) {
 		}
 		files = append(files, e...)
 	}
+	slices.Reverse(files)
 
 	var all []Migration
 	for _, e := range files {
@@ -413,14 +435,17 @@ func (d dsnInfo) Exec(queries [][]Unit) error {
 	var err error
 	switch d.Driver {
 	case "mysql", "mariadb":
-		err = d.execMysql(queries)
+		err = d.execDefault(queries)
+	case "":
+		d.Driver = "dry"
+		err = d.execDefault(queries)
 	default:
 		err = fmt.Errorf("%s: unsupported driver", d.Driver)
 	}
 	return err
 }
 
-func (d dsnInfo) execMysql(queries [][]Unit) error {
+func (d dsnInfo) execDefault(queries [][]Unit) error {
 	db, err := sql.Open(d.Driver, d.Get())
 	if err != nil {
 		return err
@@ -445,11 +470,173 @@ func (d dsnInfo) execStmts(db *sql.DB, queries []Unit) error {
 	defer tx.Commit()
 	for _, q := range queries {
 		_, err := tx.Exec(q.Query)
-		if err != nil {
+		if err != nil && q.RollbackOnError() {
 			tx.Rollback()
 			return err
 		}
-		fmt.Fprintln(os.Stdout, q.Query)
 	}
 	return nil
+}
+
+var errSupport = errors.New("not supported")
+
+type dryRows struct{}
+
+func (d dryRows) Columns() []string {
+	return nil
+}
+
+func (d dryRows) Close() error {
+	return nil
+}
+
+func (d dryRows) Next(dest []driver.Value) error {
+	return io.EOF
+}
+
+type dryResult struct{}
+
+func (d dryResult) LastInsertId() (int64, error) {
+	return 0, nil
+}
+
+func (d dryResult) RowsAffected() (int64, error) {
+	return 0, nil
+}
+
+type dryStmt struct {
+	logger *slog.Logger
+	stmt   string
+}
+
+func getStmt(stmt string) driver.Stmt {
+	return dryStmt{
+		logger: slog.New(slog.NewTextHandler(os.Stderr, nil)).WithGroup("stmt"),
+		stmt:   stmt,
+	}
+}
+
+func (d dryStmt) Close() error {
+	return nil
+}
+
+func (d dryStmt) NumInput() int {
+	return 0
+}
+
+func (d dryStmt) Exec(args []driver.Value) (driver.Result, error) {
+	vs := make([]driver.NamedValue, len(args))
+	for i := range args {
+		vs[i] = driver.NamedValue{
+			Ordinal: i,
+			Value:   args[i],
+		}
+	}
+	return d.ExecContext(context.Background(), vs)
+}
+
+func (d dryStmt) ExecContext(ctx context.Context, args []driver.NamedValue) (driver.Result, error) {
+	d.logger.Info("", "call", "exec", "sql", onelineSql(d.stmt), "args", len(args))
+	var res dryResult
+	return res, nil
+}
+
+func (d dryStmt) Query(args []driver.Value) (driver.Rows, error) {
+	vs := make([]driver.NamedValue, len(args))
+	for i := range args {
+		vs[i] = driver.NamedValue{
+			Ordinal: i,
+			Value:   args[i],
+		}
+	}
+	return d.QueryContext(context.Background(), vs)
+}
+
+func (d dryStmt) QueryContext(ctx context.Context, args []driver.NamedValue) (driver.Rows, error) {
+	d.logger.Info("", "call", "query", "sql", onelineSql(d.stmt), "args", len(args))
+	var rows dryRows
+	return rows, nil
+}
+
+type dryTx struct{}
+
+func (d dryTx) Commit() error {
+	return nil
+}
+
+func (d dryTx) Rollback() error {
+	return nil
+}
+
+type dryConn struct {
+	logger *slog.Logger
+}
+
+func getConn() driver.Conn {
+	return dryConn{
+		logger: slog.New(slog.NewTextHandler(os.Stderr, nil)).WithGroup("conn"),
+	}
+}
+
+func (d dryConn) Query(query string, args []driver.NamedValue) (driver.Rows, error) {
+	return d.QueryContext(context.Background(), query, args)
+}
+
+func (d dryConn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+	d.logger.Info("", "call", "query", "sql", onelineSql(query), "args", len(args))
+	var res dryRows
+	return res, nil
+}
+
+func (d dryConn) Exec(query string, args []driver.NamedValue) (driver.Result, error) {
+	return d.ExecContext(context.Background(), query, args)
+}
+
+func (d dryConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
+	d.logger.Info("", "call", "exec", "sql", onelineSql(query), "args", len(args))
+	var res dryResult
+	return res, nil
+}
+
+func (d dryConn) PrepareContext(ctx context.Context, query string) (driver.Stmt, error) {
+	return getStmt(query), nil
+}
+
+func (d dryConn) Prepare(stmt string) (driver.Stmt, error) {
+	return d.PrepareContext(context.Background(), stmt)
+}
+
+func (d dryConn) Close() error {
+	return nil
+}
+
+func (d dryConn) Begin() (driver.Tx, error) {
+	var opts driver.TxOptions
+	return d.BeginTx(context.Background(), opts)
+}
+
+func (d dryConn) BeginTx(_ context.Context, opts driver.TxOptions) (driver.Tx, error) {
+	var tx dryTx
+	return tx, nil
+}
+
+func (d dryConn) Ping(_ context.Context) error {
+	return nil
+}
+
+type dryDriver struct{}
+
+func (d dryDriver) Open(name string) (driver.Conn, error) {
+	return getConn(), nil
+}
+
+func onelineSql(query string) string {
+	var (
+		scan  = bufio.NewScanner(strings.NewReader(query))
+		lines []string
+	)
+	for scan.Scan() {
+		lines = append(lines, strings.TrimSpace(scan.Text()))
+	}
+	return strings.Join(lines, " ")
 }
