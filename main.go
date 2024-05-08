@@ -110,23 +110,54 @@ func getUnitsFromCommand(cmd string, all []Migration) [][]Unit {
 	return list
 }
 
-type ErrHandlerCode int
+type TxMode int
 
 const (
-	DefaultHandler ErrHandlerCode = iota
-	SilentHandler
-	WarningHandler
+	TxDefault TxMode = iota
+	TxStmt
+	TxOff
 )
+
+func getTransactionMode(str string) TxMode {
+	switch str {
+	case "off":
+		return TxOff
+	case "statement":
+		return TxStmt
+	default:
+		return TxDefault
+	}
+}
+
+type ErrMode int
+
+const (
+	ErrDefault ErrMode = iota
+	ErrSilent
+	ErrWarning
+)
+
+func getErrorMode(str string) ErrMode {
+	switch str {
+	case "ignore", "silent":
+		return ErrSilent
+	case "warning":
+		return ErrWarning
+	default:
+		return ErrDefault
+	}
+}
 
 type Unit struct {
 	Query string
 	Group int
 	Up    bool
-	Error ErrHandlerCode
+	Error ErrMode
+	Tx    TxMode
 }
 
 func (u Unit) RollbackOnError() bool {
-	return u.Error == DefaultHandler
+	return u.Error == ErrDefault
 }
 
 func group(origin string, units []Unit) []Migration {
@@ -169,6 +200,9 @@ type splitter struct {
 	group     int
 	up        bool
 	ignore    bool
+
+	errMode ErrMode
+	txMode  TxMode
 }
 
 func createSplitter() *splitter {
@@ -261,14 +295,18 @@ func (s *splitter) updateState(sql string) bool {
 	}
 	sql = strings.TrimPrefix(sql, "--")
 	sql = strings.TrimSpace(sql)
-	if sql == "up" {
+	block, options, _ := strings.Cut(sql, ";")
+	block = strings.TrimSpace(block)
+	if block == "up" {
 		s.up = true
 		s.group++
 		s.ignore = false
-	} else if sql == "down" {
+		s.resetOptions(options)
+	} else if block == "down" {
 		s.up = false
 		s.ignore = false
-	} else if sql == "ignore" {
+		s.resetOptions(options)
+	} else if block == "ignore" {
 		s.ignore = true
 	} else if strings.HasPrefix(sql, "delimiter") {
 		sql = strings.TrimPrefix(sql, "delimiter")
@@ -279,6 +317,21 @@ func (s *splitter) updateState(sql string) bool {
 		return false
 	}
 	return true
+}
+
+func (s *splitter) resetOptions(options string) error {
+	parts := strings.Split(options, ",")
+	for _, str := range parts {
+		key, value, _ := strings.Cut(str, "=")
+		switch v := strings.TrimSpace(value); strings.TrimSpace(key) {
+		case "error":
+			s.errMode = getErrorMode(v)
+		case "transaction":
+			s.txMode = getTransactionMode(v)
+		default:
+		}
+	}
+	return nil
 }
 
 func (s *splitter) reset() {
