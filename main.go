@@ -153,7 +153,6 @@ type Unit struct {
 	Group int
 	Up    bool
 	Error ErrMode
-	Tx    TxMode
 }
 
 func (u Unit) RollbackOnError() bool {
@@ -183,11 +182,30 @@ func group(origin string, units []Unit) []Migration {
 	return ms
 }
 
+type Stack []Migration
+
+func (s *Stack) New(m Migration) {
+	*s = append(*s, m)
+}
+
+func (s *Stack) Push(u Unit) {
+	x := len(*s) - 1
+	m := (*s)[x]
+	if u.Up {
+		m.Up = append(m.Up, u)
+	} else {
+		m.Down = append(m.Down, u)
+	}
+	(*s)[x] = m
+}
+
 type Migration struct {
-	File  string
-	Up    []Unit
-	Down  []Unit
-	Group int
+	File    string
+	Up      []Unit
+	Down    []Unit
+	Group   int
+	errMode ErrMode
+	txMode  TxMode
 }
 
 const (
@@ -215,11 +233,7 @@ func createSplitter() *splitter {
 func (s *splitter) Load(file, spec string) ([]Migration, error) {
 	es, err := os.ReadDir(file)
 	if err != nil {
-		units, err := s.load(file)
-		if err != nil {
-			return nil, err
-		}
-		return group(file, units), nil
+		return s.load(file)
 	}
 	slices.Reverse(es)
 	rgl, err := parseSpec(spec)
@@ -244,12 +258,13 @@ func (s *splitter) Load(file, spec string) ([]Migration, error) {
 		if err != nil {
 			return nil, err
 		}
-		all = append(all, group(origin, units)...)
+		all = append(all, units...)
+		// all = append(all, group(origin, units)...)
 	}
 	return all, nil
 }
 
-func (s *splitter) load(file string) ([]Unit, error) {
+func (s *splitter) load(file string) (Stack, error) {
 	r, err := os.Open(file)
 	if err != nil {
 		return nil, err
@@ -260,11 +275,12 @@ func (s *splitter) load(file string) ([]Unit, error) {
 	return s.Split(r)
 }
 
-func (s *splitter) Split(r io.Reader) ([]Unit, error) {
+func (s *splitter) Split(r io.Reader) (Stack, error) {
 	var (
 		scan = bufio.NewScanner(r)
-		list []Unit
+		list Stack
 	)
+	list.New(s.getMigration())
 	scan.Split(s.splitStmt)
 	for scan.Scan() {
 		sql := scan.Text()
@@ -273,19 +289,32 @@ func (s *splitter) Split(r io.Reader) ([]Unit, error) {
 			sql = strings.TrimSpace(sql)
 		}
 		if s.updateState(sql) {
+			list.New(s.getMigration())
 			continue
 		}
 		if len(sql) == 0 || s.ignore {
 			continue
 		}
-		u := Unit{
-			Query: sql,
-			Up:    s.up,
-			Group: s.group,
-		}
-		list = append(list, u)
+		list.Push(s.getUnit(sql))
 	}
 	return list, scan.Err()
+}
+
+func (s *splitter) getMigration() Migration {
+	return Migration{
+		File:    "",
+		Group:   s.group,
+		errMode: s.errMode,
+		txMode:  s.txMode,
+	}
+}
+
+func (s *splitter) getUnit(sql string) Unit {
+	return Unit{
+		Query: sql,
+		Up:    s.up,
+		Group: s.group,
+	}
 }
 
 func (s *splitter) updateState(sql string) bool {
