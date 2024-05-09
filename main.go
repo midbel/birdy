@@ -36,17 +36,15 @@ func main() {
 		os.Exit(1)
 	}
 	switch cmd := flag.Arg(0); cmd {
-	case "up", "down", "redo":
-		units := getUnitsFromCommand(cmd, list)
+	case "up", "down":
+		units := getMigrationsFromCommand(cmd, list)
 		err = args.dsn.Exec(units)
 	case "info":
 		for _, m := range list {
 			n, _ := fmt.Fprintf(os.Stdout, "migration #%d", m.Group)
 			fmt.Fprintln(os.Stdout)
 			fmt.Fprintln(os.Stdout, strings.Repeat("=", n))
-			fmt.Fprintf(os.Stdout, "- up  : %d queries", len(m.Up))
-			fmt.Fprintln(os.Stdout)
-			fmt.Fprintf(os.Stdout, "- down: %d queries", len(m.Down))
+			fmt.Fprintf(os.Stdout, "- %d queries", len(m.Queries))
 			fmt.Fprintln(os.Stdout)
 		}
 	case "history":
@@ -96,16 +94,21 @@ func extractSQL(file, spec string) ([]Migration, error) {
 	return s.Load(file, spec)
 }
 
-func getUnitsFromCommand(cmd string, all []Migration) [][]Unit {
-	var list [][]Unit
-	for _, a := range all {
-		qs := a.Up
-		if cmd == "down" {
-			qs = a.Down
-		} else if cmd == "redo" {
-			qs = append(a.Down, qs...)
+func getMigrationsFromCommand(cmd string, all []Migration) []Migration {
+	keep := func(e Migration) bool {
+		return e.Up
+	}
+	if cmd == "down" {
+		keep = func(e Migration) bool {
+			return !e.Up
 		}
-		list = append(list, qs)
+	}
+	var list []Migration
+	for _, a := range all {
+		if !keep(a) {
+			continue
+		}
+		list = append(list, a)
 	}
 	return list
 }
@@ -159,29 +162,6 @@ func (u Unit) RollbackOnError() bool {
 	return u.Error == ErrDefault
 }
 
-func group(origin string, units []Unit) []Migration {
-	var ms []Migration
-	for _, u := range units {
-		x := slices.IndexFunc(ms, func(m Migration) bool {
-			return m.Group == u.Group
-		})
-		if x < 0 {
-			m := Migration{
-				File:  origin,
-				Group: u.Group,
-			}
-			ms = append(ms, m)
-			x = len(ms) - 1
-		}
-		if u.Up {
-			ms[x].Up = append(ms[x].Up, u)
-		} else {
-			ms[x].Down = append(ms[x].Down, u)
-		}
-	}
-	return ms
-}
-
 type Stack []Migration
 
 func (s *Stack) New(m Migration) {
@@ -191,19 +171,15 @@ func (s *Stack) New(m Migration) {
 func (s *Stack) Push(u Unit) {
 	x := len(*s) - 1
 	m := (*s)[x]
-	if u.Up {
-		m.Up = append(m.Up, u)
-	} else {
-		m.Down = append(m.Down, u)
-	}
+	m.Queries = append(m.Queries, u)
 	(*s)[x] = m
 }
 
 type Migration struct {
 	File    string
-	Up      []Unit
-	Down    []Unit
+	Queries []Unit
 	Group   int
+	Up      bool
 	errMode ErrMode
 	txMode  TxMode
 }
@@ -303,6 +279,7 @@ func (s *splitter) Split(r io.Reader) (Stack, error) {
 func (s *splitter) getMigration() Migration {
 	return Migration{
 		File:    "",
+		Up:      s.up,
 		Group:   s.group,
 		errMode: s.errMode,
 		txMode:  s.txMode,
@@ -513,21 +490,21 @@ func (d dsnInfo) Get() string {
 	return fmt.Sprintf("%s:%s@tcp(%s:%d)/%s", d.User, d.Pass, d.Host, d.Port, d.Name)
 }
 
-func (d dsnInfo) Exec(queries [][]Unit) error {
+func (d dsnInfo) Exec(qs []Migration) error {
 	var err error
 	switch d.Driver {
 	case "mysql", "mariadb":
-		err = d.execDefault(queries)
+		err = d.execDefault(qs)
 	case "":
 		d.Driver = "dry"
-		err = d.execDefault(queries)
+		err = d.execDefault(qs)
 	default:
 		err = fmt.Errorf("%s: unsupported driver", d.Driver)
 	}
 	return err
 }
 
-func (d dsnInfo) execDefault(queries [][]Unit) error {
+func (d dsnInfo) execDefault(qs []Migration) error {
 	db, err := sql.Open(d.Driver, d.Get())
 	if err != nil {
 		return err
@@ -536,8 +513,8 @@ func (d dsnInfo) execDefault(queries [][]Unit) error {
 	if err := db.Ping(); err != nil {
 		return err
 	}
-	for i := range queries {
-		if err := d.execStmts(db, queries[i]); err != nil {
+	for i := range qs {
+		if err := d.execStmts(db, qs[i].Queries); err != nil {
 			return err
 		}
 	}
