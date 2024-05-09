@@ -154,7 +154,6 @@ func getErrorMode(str string) ErrMode {
 type Unit struct {
 	Query string
 	Group int
-	Up    bool
 	Error ErrMode
 }
 
@@ -207,25 +206,13 @@ func createSplitter() *splitter {
 }
 
 func (s *splitter) Load(file, spec string) ([]Migration, error) {
-	es, err := os.ReadDir(file)
+	files, err := os.ReadDir(file)
 	if err != nil {
 		return s.load(file)
 	}
-	slices.Reverse(es)
-	rgl, err := parseSpec(spec)
-	if err != nil {
+	if files, err = getFilesFromSpec(spec, files); err != nil {
 		return nil, err
 	}
-
-	var files []os.DirEntry
-	for _, r := range rgl {
-		e, err := r.peek(es)
-		if err != nil {
-			return nil, err
-		}
-		files = append(files, e...)
-	}
-	slices.Reverse(files)
 
 	var all []Migration
 	for _, e := range files {
@@ -235,7 +222,6 @@ func (s *splitter) Load(file, spec string) ([]Migration, error) {
 			return nil, err
 		}
 		all = append(all, units...)
-		// all = append(all, group(origin, units)...)
 	}
 	return all, nil
 }
@@ -289,7 +275,6 @@ func (s *splitter) getMigration() Migration {
 func (s *splitter) getUnit(sql string) Unit {
 	return Unit{
 		Query: sql,
-		Up:    s.up,
 		Group: s.group,
 	}
 }
@@ -419,6 +404,24 @@ func (r Range) isValid() bool {
 		return true
 	}
 	return r.Start < r.End
+}
+
+func getFilesFromSpec(spec string, es []os.DirEntry) ([]os.DirEntry, error) {
+	rgl, err := parseSpec(spec)
+	if err != nil {
+		return nil, err
+	}
+	slices.Reverse(es)
+	var files []os.DirEntry
+	for _, r := range rgl {
+		e, err := r.peek(es)
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, e...)
+	}
+	slices.Reverse(files)
+	return files, nil
 }
 
 func parseSpec(spec string) ([]Range, error) {
