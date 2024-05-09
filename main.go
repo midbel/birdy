@@ -125,7 +125,7 @@ func getTransactionMode(str string) TxMode {
 	switch str {
 	case "off":
 		return TxOff
-	case "statement":
+	case "statement", "stmt", "query":
 		return TxStmt
 	default:
 		return TxDefault
@@ -514,14 +514,51 @@ func (d dsnInfo) execDefault(qs []Migration) error {
 		return err
 	}
 	for i := range qs {
-		if err := d.execStmts(db, qs[i].Queries); err != nil {
+		switch qs[i].txMode {
+		case TxDefault:
+			err = d.execStmtsTxDefault(db, qs[i].Queries)
+		case TxStmt:
+			err = d.execStmtsTxQuery(db, qs[i].Queries)
+		case TxOff:
+			err = d.execStmtsTxOff(db, qs[i].Queries)
+		default:
+		}
+		if err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (d dsnInfo) execStmts(db *sql.DB, queries []Unit) error {
+func (d dsnInfo) execStmtsTxQuery(db *sql.DB, queries []Unit) error {
+	for _, q := range queries {
+		tx, err := db.Begin()
+		if err != nil {
+			return err
+		}
+		if _, err = tx.Exec(q.Query); err == nil {
+			tx.Commit()
+		} else {
+			tx.Rollback()
+		}
+		if err != nil && q.RollbackOnError() {
+			return err
+		}
+	}
+	return nil
+}
+
+func (d dsnInfo) execStmtsTxOff(db *sql.DB, queries []Unit) error {
+	for _, q := range queries {
+		_, err := db.Exec(q.Query)
+		if err != nil && q.RollbackOnError() {
+			return err
+		}
+	}
+	return nil
+}
+
+func (d dsnInfo) execStmtsTxDefault(db *sql.DB, queries []Unit) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return err
