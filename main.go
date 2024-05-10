@@ -164,6 +164,10 @@ func (u Unit) RollbackOnError() bool {
 type Stack []Migration
 
 func (s *Stack) New(m Migration) {
+	if len(*s) == 1 && len((*s)[0].Queries) == 0 {
+		(*s)[0] = m
+		return
+	}
 	*s = append(*s, m)
 }
 
@@ -287,24 +291,23 @@ func (s *splitter) updateState(sql string) bool {
 	sql = strings.TrimPrefix(sql, "--")
 	sql = strings.TrimSpace(sql)
 	block, options, _ := strings.Cut(sql, ";")
-	block = strings.TrimSpace(block)
-	if block == "up" {
+	switch block = strings.TrimSpace(block); {
+	case block == "up":
 		s.up = true
 		s.group++
 		s.ignore = false
 		s.resetOptions(options)
-	} else if block == "down" {
+	case block == "down":
 		s.up = false
 		s.ignore = false
 		s.resetOptions(options)
-	} else if block == "ignore" {
+	case block == "ignore":
 		s.ignore = true
-	} else if strings.HasPrefix(sql, "delimiter") {
+	case strings.HasPrefix(sql, "delimiter"):
 		sql = strings.TrimPrefix(sql, "delimiter")
 		sql = strings.TrimSpace(sql)
 		s.delimiter = []byte(sql)
-	} else {
-		// skip SQL parameters - useless
+	default:
 		return false
 	}
 	return true
