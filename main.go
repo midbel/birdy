@@ -36,15 +36,16 @@ func main() {
 		os.Exit(1)
 	}
 	switch cmd := flag.Arg(0); cmd {
-	case "up", "down":
-		units := getMigrationsFromCommand(cmd, list)
-		err = args.dsn.Exec(units)
+	case "run":
+		err = args.dsn.Exec(list)
 	case "info":
 		for _, m := range list {
 			n, _ := fmt.Fprintf(os.Stdout, "migration #%d", m.Group)
 			fmt.Fprintln(os.Stdout)
 			fmt.Fprintln(os.Stdout, strings.Repeat("=", n))
-			fmt.Fprintf(os.Stdout, "- %d queries", len(m.Queries))
+			fmt.Fprintf(os.Stdout, "- %d groups", m.Block())
+			fmt.Fprintln(os.Stdout)
+			fmt.Fprintf(os.Stdout, "- %d queries", m.Count())
 			fmt.Fprintln(os.Stdout)
 		}
 	case "history":
@@ -92,25 +93,6 @@ func parseArgs() (Args, error) {
 func extractSQL(file, spec string) ([]Migration, error) {
 	s := createSplitter()
 	return s.Load(file, spec)
-}
-
-func getMigrationsFromCommand(cmd string, all []Migration) []Migration {
-	keep := func(e Migration) bool {
-		return e.Up
-	}
-	if cmd == "down" {
-		keep = func(e Migration) bool {
-			return !e.Up
-		}
-	}
-	var list []Migration
-	for _, a := range all {
-		if !keep(a) {
-			continue
-		}
-		list = append(list, a)
-	}
-	return list
 }
 
 type TxMode int
@@ -182,9 +164,20 @@ type Migration struct {
 	File    string
 	Queries []Unit
 	Group   int
-	Up      bool
 	errMode ErrMode
 	txMode  TxMode
+}
+
+func (m Migration) Block() int {
+	seen := make(map[int]struct{})
+	for i := range m.Queries {
+		seen[m.Queries[i].Group] = struct{}{}
+	}
+	return len(seen)
+}
+
+func (m Migration) Count() int {
+	return len(m.Queries)
 }
 
 const (
@@ -269,7 +262,6 @@ func (s *splitter) Split(r io.Reader) (Stack, error) {
 func (s *splitter) getMigration() Migration {
 	return Migration{
 		File:    "",
-		Up:      s.up,
 		Group:   s.group,
 		errMode: s.errMode,
 		txMode:  s.txMode,
@@ -292,13 +284,8 @@ func (s *splitter) updateState(sql string) bool {
 	sql = strings.TrimSpace(sql)
 	block, options, _ := strings.Cut(sql, ";")
 	switch block = strings.TrimSpace(block); {
-	case block == "up":
-		s.up = true
+	case block == "migrate" || block == "":
 		s.group++
-		s.ignore = false
-		s.resetOptions(options)
-	case block == "down":
-		s.up = false
 		s.ignore = false
 		s.resetOptions(options)
 	case block == "ignore":
