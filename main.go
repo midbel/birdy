@@ -37,18 +37,13 @@ func main() {
 	}
 	switch cmd := flag.Arg(0); cmd {
 	case "run":
-		err = args.dsn.Exec(list)
+		err = runRun(args.dsn, list)
 	case "info":
-		for _, m := range list {
-			n, _ := fmt.Fprintf(os.Stdout, "migration #%d", m.Group)
-			fmt.Fprintln(os.Stdout)
-			fmt.Fprintln(os.Stdout, strings.Repeat("=", n))
-			fmt.Fprintf(os.Stdout, "- %d groups", m.Block())
-			fmt.Fprintln(os.Stdout)
-			fmt.Fprintf(os.Stdout, "- %d queries", m.Count())
-			fmt.Fprintln(os.Stdout)
-		}
+		runInfo(list)
 	case "history":
+		runHistory(flag.Arg(1))
+	case "compare", "cmp":
+		runDiff(flag.Arg(1), flag.Arg(2))
 	default:
 		err = fmt.Errorf("%s: unknown command", cmd)
 	}
@@ -56,6 +51,30 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
+}
+
+func runDiff(serv1, serv2 string) {
+
+}
+
+func runHistory(server string) {
+
+}
+
+func runInfo(list []Migration) {
+	for _, m := range list {
+		n, _ := fmt.Fprintf(os.Stdout, "migration #%d", m.Group)
+		fmt.Fprintln(os.Stdout)
+		fmt.Fprintln(os.Stdout, strings.Repeat("=", n))
+		fmt.Fprintf(os.Stdout, "- %d groups", m.Block())
+		fmt.Fprintln(os.Stdout)
+		fmt.Fprintf(os.Stdout, "- %d queries", m.Count())
+		fmt.Fprintln(os.Stdout)
+	}
+}
+
+func runRun(dsn dsnInfo, list []Migration) error {
+	return args.dsn.Exec(list)
 }
 
 type Args struct {
